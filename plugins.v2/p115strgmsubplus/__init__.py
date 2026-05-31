@@ -67,7 +67,7 @@ class P115StrgmSubPlus(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     # 插件版本
-    plugin_version = "1.4.4"
+    plugin_version = "1.4.5"
     # 插件作者
     plugin_author = "wulance"
     # 作者主页
@@ -150,6 +150,7 @@ class P115StrgmSubPlus(_PluginBase):
 
     _MIN_INTERVAL_HOURS: int = 8
     _MP_SEARCH_SITE_ID: int = -115
+    _MP_SEARCH_INDEXER_ID: int = -1
     _MP_SEARCH_SITE_NAME: str = "115网盘"
     _MP_SEARCH_DOMAIN: str = "p115strgmsubplus.local"
     _MP_MAGNET_PREFIX: str = "magnet:?xt=urn:btih:"
@@ -875,7 +876,7 @@ class P115StrgmSubPlus(_PluginBase):
             from app.helper.sites import SitesHelper  # noqa
 
             indexer = {
-                "id": self._MP_SEARCH_SITE_ID,
+                "id": self._MP_SEARCH_INDEXER_ID,
                 "name": self._MP_SEARCH_SITE_NAME,
                 "domain": f"https://{self._MP_SEARCH_DOMAIN}/",
                 "url": f"https://{self._MP_SEARCH_DOMAIN}/",
@@ -898,11 +899,11 @@ class P115StrgmSubPlus(_PluginBase):
             logger.warning(f"接入 MoviePilot 搜索失败：{e}")
 
     def _add_mp_search_site_to_selected(self):
-        """如果用户配置了搜索站点白名单，自动追加 115 虚拟站点。"""
+        """把 115 虚拟站点加入 MoviePilot 搜索站点选择。"""
         try:
             selected_sites = SystemConfigOper().get(SystemConfigKey.IndexerSites) or []
-            if selected_sites and self._MP_SEARCH_SITE_ID not in selected_sites:
-                selected_sites.append(self._MP_SEARCH_SITE_ID)
+            if self._MP_SEARCH_INDEXER_ID not in selected_sites:
+                selected_sites.append(self._MP_SEARCH_INDEXER_ID)
                 SystemConfigOper().set(SystemConfigKey.IndexerSites, selected_sites)
                 logger.info("已将 115网盘 加入 MoviePilot 搜索站点")
         except Exception as e:
@@ -912,8 +913,12 @@ class P115StrgmSubPlus(_PluginBase):
         """关闭 MP 搜索接入时，从已选搜索站点中移除虚拟站点。"""
         try:
             selected_sites = SystemConfigOper().get(SystemConfigKey.IndexerSites) or []
-            if self._MP_SEARCH_SITE_ID in selected_sites:
-                selected_sites.remove(self._MP_SEARCH_SITE_ID)
+            changed = False
+            for site_id in (self._MP_SEARCH_INDEXER_ID, self._MP_SEARCH_SITE_ID):
+                if site_id in selected_sites:
+                    selected_sites.remove(site_id)
+                    changed = True
+            if changed:
                 SystemConfigOper().set(SystemConfigKey.IndexerSites, selected_sites)
         except Exception as e:
             logger.warning(f"移除 MoviePilot 115 搜索站点失败：{e}")
@@ -921,7 +926,7 @@ class P115StrgmSubPlus(_PluginBase):
     def _is_mp_search_site(self, site: Optional[Dict[str, Any]]) -> bool:
         if not site:
             return False
-        return site.get("id") == self._MP_SEARCH_SITE_ID or site.get("parser") == "P115StrgmSubPlus"
+        return site.get("id") in (self._MP_SEARCH_INDEXER_ID, self._MP_SEARCH_SITE_ID) or site.get("parser") == "P115StrgmSubPlus"
 
     def _build_p115_magnet(self, share_url: str, title: str, mtype: Optional[MediaType] = None) -> str:
         digest = hashlib.sha1(share_url.encode("utf-8")).hexdigest()
