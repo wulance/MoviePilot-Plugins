@@ -183,6 +183,33 @@ class SearchHandler:
         results = search_results.get("results", {}) if search_results and not search_results.get("error") else {}
         return results.get("115网盘", [])
 
+    @staticmethod
+    def _unique_keywords(keywords: List[str]) -> List[str]:
+        """保留顺序去重搜索词。"""
+        result = []
+        seen = set()
+        for keyword in keywords:
+            keyword = (keyword or "").strip()
+            if not keyword or keyword in seen:
+                continue
+            seen.add(keyword)
+            result.append(keyword)
+        return result
+
+    @staticmethod
+    def _media_titles(mediainfo: MediaInfo) -> List[str]:
+        """提取可用于搜索的中文名、英文名和别名。"""
+        titles = [
+            getattr(mediainfo, "title", ""),
+            getattr(mediainfo, "en_title", ""),
+            getattr(mediainfo, "original_title", ""),
+            getattr(mediainfo, "original_name", ""),
+        ]
+        names = getattr(mediainfo, "names", None) or []
+        if isinstance(names, list):
+            titles.extend(str(name) for name in names[:6])
+        return SearchHandler._unique_keywords(titles)
+
     def _search_nullbr(
         self,
         mediainfo: MediaInfo,
@@ -235,11 +262,13 @@ class SearchHandler:
             logger.warning(f"PanSou 客户端未初始化，跳过 PanSou 查询")
             return []
 
-        # 电视剧使用降级搜索策略
-        search_keywords = [
-            f"{mediainfo.title} {mediainfo.year}",
-            mediainfo.title
-        ]
+        search_keywords = []
+        for title in self._media_titles(mediainfo):
+            search_keywords.extend([
+                f"{title} {mediainfo.year}",
+                title,
+            ])
+        search_keywords = self._unique_keywords(search_keywords)
 
         for keyword in search_keywords:
             logger.info(f"使用 PanSou 搜索电影资源: {mediainfo.title}，关键词: '{keyword}'")
@@ -269,11 +298,16 @@ class SearchHandler:
             logger.warning(f"PanSou 客户端未初始化，跳过 PanSou 查询")
             return []
 
-        # 电视剧使用降级搜索策略
-        search_keywords = [
-            f"{mediainfo.title}{season}",  # 中文季号格式
-            mediainfo.title
-        ]
+        search_keywords = []
+        for title in self._media_titles(mediainfo):
+            search_keywords.extend([
+                f"{title} S{season:02d}",
+                f"{title} Season {season}",
+                f"{title} 第{season}季",
+                f"{title}{season}",
+                title,
+            ])
+        search_keywords = self._unique_keywords(search_keywords)
 
         for keyword in search_keywords:
             logger.info(f"使用 PanSou 搜索电视剧资源: {mediainfo.title} S{season}，关键词: '{keyword}'")

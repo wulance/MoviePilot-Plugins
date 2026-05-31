@@ -109,6 +109,43 @@ class FileMatcher:
 
     # 视频文件扩展名
     VIDEO_EXTENSIONS = {'.mkv', '.mp4', '.avi', '.rmvb', '.wmv', '.flv', '.ts', '.m2ts'}
+
+    CN_NUMBERS = {
+        "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+        "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+    }
+
+    @staticmethod
+    def _parse_cn_number(text: str) -> Optional[int]:
+        """解析常见中文数字，支持一到九十九。"""
+        if not text:
+            return None
+        if text.isdigit():
+            return int(text)
+        if text in FileMatcher.CN_NUMBERS:
+            return FileMatcher.CN_NUMBERS[text]
+        if "十" in text:
+            left, _, right = text.partition("十")
+            tens = FileMatcher.CN_NUMBERS.get(left, 1) if left else 1
+            ones = FileMatcher.CN_NUMBERS.get(right, 0) if right else 0
+            return tens * 10 + ones
+        return None
+
+    @staticmethod
+    def _season_patterns(file_name: str) -> List[int]:
+        """提取文件名中明确出现的季号。"""
+        seasons = []
+        patterns = [
+            r'[Ss](\d{1,2})(?=[Ee\s._-])',
+            r'[Ss]eason\s*(\d{1,2})',
+            r'第\s*([0-9一二两三四五六七八九十]{1,3})\s*季',
+        ]
+        for pattern in patterns:
+            for match in re.finditer(pattern, file_name, re.IGNORECASE):
+                season = FileMatcher._parse_cn_number(match.group(1))
+                if season is not None:
+                    seasons.append(season)
+        return seasons
     
     @staticmethod
     def _contains_other_season(file_name: str, target_season: int) -> bool:
@@ -119,28 +156,7 @@ class FileMatcher:
         :param target_season: 目标季号
         :return: 是否包含其他季标识
         """
-        # 匹配 S01、S02 等格式，检查是否为其他季
-        season_match = re.search(r'[Ss](\d{1,2})[Ee]', file_name)
-        if season_match:
-            found_season = int(season_match.group(1))
-            if found_season != target_season:
-                return True
-
-        # 匹配 "第X季" 格式
-        cn_season_match = re.search(r'第\s*(\d{1,2})\s*季', file_name)
-        if cn_season_match:
-            found_season = int(cn_season_match.group(1))
-            if found_season != target_season:
-                return True
-
-        # 匹配 Season X 格式
-        en_season_match = re.search(r'[Ss]eason\s*(\d{1,2})', file_name, re.IGNORECASE)
-        if en_season_match:
-            found_season = int(en_season_match.group(1))
-            if found_season != target_season:
-                return True
-
-        return False
+        return any(found_season != target_season for found_season in FileMatcher._season_patterns(file_name))
 
     @staticmethod
     def _matches_target_season(file_name: str, target_season: int) -> bool:
@@ -151,25 +167,7 @@ class FileMatcher:
         :param target_season: 目标季号
         :return: 是否匹配目标季
         """
-        # 匹配 S01、S02 等格式
-        season_match = re.search(r'[Ss](\d{1,2})[Ee]', file_name)
-        if season_match:
-            found_season = int(season_match.group(1))
-            return found_season == target_season
-
-        # 匹配 "第X季" 格式
-        cn_season_match = re.search(r'第\s*(\d{1,2})\s*季', file_name)
-        if cn_season_match:
-            found_season = int(cn_season_match.group(1))
-            return found_season == target_season
-
-        # 匹配 Season X 格式
-        en_season_match = re.search(r'[Ss]eason\s*(\d{1,2})', file_name, re.IGNORECASE)
-        if en_season_match:
-            found_season = int(en_season_match.group(1))
-            return found_season == target_season
-
-        return False
+        return target_season in FileMatcher._season_patterns(file_name)
 
     @staticmethod
     def _extract_episode_from_sxex(file_name: str) -> Optional[Tuple[int, int]]:
@@ -179,10 +177,19 @@ class FileMatcher:
         :param file_name: 文件名
         :return: (季号, 集号) 或 None
         """
-        # 匹配 S01E01、S1E1、S01E175 等格式（支持1-4位集数）
-        match = re.search(r'[Ss](\d{1,2})[Ee](\d{1,4})', file_name)
-        if match:
-            return int(match.group(1)), int(match.group(2))
+        patterns = [
+            r'[Ss](\d{1,2})\s*[\._-]?\s*[Ee](\d{1,4})',
+            r'(\d{1,2})[xX](\d{1,4})',
+            r'[Ss]eason\s*(\d{1,2}).{0,12}?[Ee]pisode\s*(\d{1,4})',
+            r'第\s*([0-9一二两三四五六七八九十]{1,3})\s*季\s*第?\s*([0-9一二两三四五六七八九十]{1,3})\s*[集话話]',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, file_name, re.IGNORECASE)
+            if match:
+                season = FileMatcher._parse_cn_number(match.group(1))
+                episode = FileMatcher._parse_cn_number(match.group(2))
+                if season is not None and episode is not None:
+                    return season, episode
         return None
 
     @staticmethod
@@ -206,12 +213,18 @@ class FileMatcher:
         # 宽松模式：不包含季号的匹配模式（需要额外验证）
         loose_patterns = [
             # 第1集、第175集 格式
-            rf'第\s*{episode}\s*集',
+            rf'第\s*0?{episode}\s*[集话話]',
             # EP01、EP175 格式
-            rf'[Ee][Pp]{episode}(?!\d)',
+            rf'[Ee][Pp]\s*0?{episode}(?!\d)',
+            # Episode 01 格式
+            rf'[Ee]pisode\s*0?{episode}(?!\d)',
             # E01格式（开头或特定位置）
             rf'[\[\(\s\.\-_][Ee]0?{episode}[\]\)\s\.\-_]',
         ]
+
+        cn_episode = next((k for k, v in FileMatcher.CN_NUMBERS.items() if v == episode and episode <= 10), None)
+        if cn_episode:
+            loose_patterns.append(rf'第\s*{cn_episode}\s*[集话話]')
 
         # 最宽松模式：纯数字匹配（风险较高，仅作为最后手段）
         # 仅当文件名没有 SxxExx 格式且明确匹配目标季或无季号标识时使用

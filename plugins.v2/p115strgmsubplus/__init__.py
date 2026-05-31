@@ -5,6 +5,7 @@
 import hashlib
 import datetime
 import random
+import re
 from pathlib import Path
 from threading import Lock
 from typing import Optional, Any, List, Dict, Tuple
@@ -67,7 +68,7 @@ class P115StrgmSubPlus(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     # 插件版本
-    plugin_version = "1.4.6"
+    plugin_version = "1.4.7"
     # 插件作者
     plugin_author = "wulance"
     # 作者主页
@@ -1015,34 +1016,193 @@ class P115StrgmSubPlus(_PluginBase):
             return []
 
         resources = (search_result.get("results") or {}).get("115网盘", [])
+        resources = sorted(
+            resources,
+            key=lambda item: self._mp_resource_sort_key(item.get("title") or keyword),
+        )
         torrents: List[TorrentInfo] = []
         for resource in resources:
             share_url = resource.get("url")
-            title = resource.get("title") or keyword
+            raw_title = resource.get("title") or keyword
             if not share_url:
                 continue
+            title_info = self._parse_mp_resource_title(raw_title)
+            title = self._format_mp_resource_title(raw_title, title_info)
+            labels = self._build_mp_resource_labels(title_info, resource)
+            size = self._parse_resource_size(resource)
             torrent = TorrentInfo(
                 site=self._MP_SEARCH_SITE_ID,
                 site_name=self._MP_SEARCH_SITE_NAME,
                 site_order=0,
                 title=title,
-                description=f"115网盘分享链接：{share_url}",
+                description=self._format_mp_resource_description(raw_title, title_info, resource, share_url),
                 enclosure=self._build_p115_magnet(share_url, title, mtype),
                 page_url=share_url,
                 pubdate=resource.get("update_time") or "",
                 seeders=999,
                 peers=0,
                 grabs=0,
-                size=0,
+                size=size,
                 uploadvolumefactor=1.0,
                 downloadvolumefactor=0.0,
                 category=mtype.value if isinstance(mtype, MediaType) else None,
-                labels=["115网盘", "插件转存"],
+                labels=labels,
             )
             torrents.append(torrent)
 
         logger.info(f"MoviePilot 搜索 115 资源完成：{keyword}，返回 {len(torrents)} 条")
         return torrents
+
+    @staticmethod
+    def _parse_mp_resource_title(title: str) -> Dict[str, Any]:
+        """从资源标题中提取季、分辨率、质量和特效标签。"""
+        text = title or ""
+        season = None
+        season_patterns = [
+            r'[Ss](\d{1,2})(?=[Ee\s._-])',
+            r'[Ss]eason\s*(\d{1,2})',
+            r'第\s*([0-9一二两三四五六七八九十]{1,3})\s*季',
+        ]
+        for pattern in season_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                season = P115StrgmSubPlus._parse_simple_number(match.group(1))
+                break
+
+        resolution = None
+        resolution_patterns = [
+            ("2160p", r'2160p|4K|UHD'),
+            ("1080p", r'1080p|FHD'),
+            ("720p", r'720p|HDTV'),
+            ("480p", r'480p'),
+        ]
+        for label, pattern in resolution_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                resolution = label
+                break
+
+        quality = None
+        quality_patterns = [
+            ("BluRay", r'BluRay|BDRip|BDMV'),
+            ("WEB-DL", r'WEB[- .]?DL'),
+            ("WEBRip", r'WEB[- .]?Rip'),
+            ("HDTV", r'HDTV'),
+        ]
+        for label, pattern in quality_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                quality = label
+                break
+
+        effects = []
+        for label, pattern in [
+            ("DV", r'\bDV\b|Dolby[ ._-]?Vision'),
+            ("HDR", r'\bHDR10?\b|HDR10\+'),
+            ("Atmos", r'Atmos'),
+            ("HEVC", r'HEVC|H\.?265|x265'),
+            ("AVC", r'AVC|H\.?264|x264'),
+        ]:
+            if re.search(pattern, text, re.IGNORECASE):
+                effects.append(label)
+
+        return {
+            "season": season,
+            "resolution": resolution,
+            "quality": quality,
+            "effects": effects,
+        }
+
+    @staticmethod
+    def _parse_simple_number(text: str) -> Optional[int]:
+        if not text:
+            return None
+        if text.isdigit():
+            return int(text)
+        numbers = {
+            "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+            "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+        }
+        if text in numbers:
+            return numbers[text]
+        if "十" in text:
+            left, _, right = text.partition("十")
+            tens = numbers.get(left, 1) if left else 1
+            ones = numbers.get(right, 0) if right else 0
+            return tens * 10 + ones
+        return None
+
+    @staticmethod
+    def _format_mp_resource_title(raw_title: str, info: Dict[str, Any]) -> str:
+        parts = []
+        if info.get("season"):
+            parts.append(f"S{info['season']:02d}")
+        if info.get("resolution"):
+            parts.append(info["resolution"])
+        if info.get("quality"):
+            parts.append(info["quality"])
+        parts.extend(info.get("effects") or [])
+        suffix = f" [{' / '.join(parts)}]" if parts else ""
+        return f"{raw_title}{suffix}"
+
+    @staticmethod
+    def _build_mp_resource_labels(info: Dict[str, Any], resource: Dict[str, Any]) -> List[str]:
+        labels = ["115网盘", "插件转存"]
+        if info.get("season"):
+            labels.append(f"S{info['season']:02d}")
+        for key in ("resolution", "quality"):
+            if info.get(key):
+                labels.append(info[key])
+        labels.extend(info.get("effects") or [])
+        channel = resource.get("channel") or resource.get("source") or resource.get("from")
+        if channel:
+            labels.append(str(channel))
+        return list(dict.fromkeys(labels))
+
+    @staticmethod
+    def _format_mp_resource_description(raw_title: str, info: Dict[str, Any], resource: Dict[str, Any], share_url: str) -> str:
+        details = [f"原标题：{raw_title}"]
+        meta = []
+        if info.get("season"):
+            meta.append(f"季：S{info['season']:02d}")
+        if info.get("resolution"):
+            meta.append(f"分辨率：{info['resolution']}")
+        if info.get("quality"):
+            meta.append(f"质量：{info['quality']}")
+        if info.get("effects"):
+            meta.append(f"特性：{'/'.join(info['effects'])}")
+        size_text = resource.get("size") or resource.get("file_size") or resource.get("fileSize")
+        if size_text:
+            meta.append(f"大小：{size_text}")
+        if meta:
+            details.append("；".join(meta))
+        details.append(f"115网盘分享链接：{share_url}")
+        return "\n".join(details)
+
+    @staticmethod
+    def _parse_resource_size(resource: Dict[str, Any]) -> int:
+        size = resource.get("size") or resource.get("file_size") or resource.get("fileSize")
+        if isinstance(size, (int, float)):
+            return int(size)
+        if not isinstance(size, str):
+            return 0
+        match = re.search(r'([\d.]+)\s*(TB|GB|MB|KB|B)', size, re.IGNORECASE)
+        if not match:
+            return 0
+        value = float(match.group(1))
+        unit = match.group(2).upper()
+        scale = {
+            "B": 1,
+            "KB": 1024,
+            "MB": 1024 ** 2,
+            "GB": 1024 ** 3,
+            "TB": 1024 ** 4,
+        }[unit]
+        return int(value * scale)
+
+    def _mp_resource_sort_key(self, title: str) -> Tuple[int, int, int, str]:
+        info = self._parse_mp_resource_title(title)
+        resolution_rank = {"2160p": 0, "1080p": 1, "720p": 2, "480p": 3}.get(info.get("resolution"), 9)
+        quality_rank = {"BluRay": 0, "WEB-DL": 1, "WEBRip": 2, "HDTV": 3}.get(info.get("quality"), 9)
+        return (info.get("season") or 99, resolution_rank, quality_rank, title)
 
     def mp_search_page_size(self, site: dict, keyword: Optional[str] = None):
         if self._is_mp_search_site(site):
