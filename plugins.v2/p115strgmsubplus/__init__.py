@@ -69,9 +69,9 @@ class P115StrgmSubPlus(_PluginBase):
     # 插件版本
     plugin_version = "1.4.4"
     # 插件作者
-    plugin_author = "mrtian2016"
+    plugin_author = "wulance"
     # 作者主页
-    author_url = "https://github.com/mrtian2016"
+    author_url = "https://github.com/wulance"
     # 插件配置项ID前缀
     plugin_config_prefix = "p115strgmsubplus_"
     plugin_order = 20

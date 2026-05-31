@@ -6,7 +6,7 @@
     "labels": "订阅,115网盘",
     "version": "1.4.4",
     "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
-    "author": "mrtian2016",
+    "author": "wulance",
     "level": 1,
     "history": {
       "v1.4.4": "1. 更名为115网盘订阅追更增强版，使用独立插件ID避免与旧版插件冲突；",
