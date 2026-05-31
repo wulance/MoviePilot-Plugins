@@ -67,7 +67,7 @@ class P115StrgmSubPlus(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     # 插件版本
-    plugin_version = "1.4.5"
+    plugin_version = "1.4.6"
     # 插件作者
     plugin_author = "wulance"
     # 作者主页
@@ -869,6 +869,7 @@ class P115StrgmSubPlus(_PluginBase):
     def _sync_mp_search_site(self):
         """把 115 网盘注册为 MoviePilot 搜索页可选的虚拟索引站点。"""
         if not self._enabled or not self._mp_search_enabled:
+            self._set_mp_search_patch_enabled(False)
             self._remove_mp_search_site_from_selected()
             return
 
@@ -893,10 +894,54 @@ class P115StrgmSubPlus(_PluginBase):
                 sites_helper.add_indexer(self._MP_SEARCH_DOMAIN, indexer)
             elif hasattr(sites_helper, "_indexers"):
                 sites_helper._indexers[self._MP_SEARCH_DOMAIN] = indexer
+            self._patch_sites_helper_indexers(SitesHelper, indexer)
             self._add_mp_search_site_to_selected()
             logger.info("已接入 MoviePilot 搜索：115网盘")
         except Exception as e:
             logger.warning(f"接入 MoviePilot 搜索失败：{e}")
+
+    def _patch_sites_helper_indexers(self, sites_helper_cls, indexer: Dict[str, Any]):
+        """让每次新建的 SitesHelper 都能看到插件虚拟索引器。"""
+        patch_flag = "p115strgmsubplus_patch_applied"
+        enabled_flag = "p115strgmsubplus_enabled"
+        indexer_attr = "p115strgmsubplus_indexer"
+
+        setattr(sites_helper_cls, indexer_attr, dict(indexer))
+        setattr(sites_helper_cls, enabled_flag, True)
+        if getattr(sites_helper_cls, patch_flag, False):
+            return
+
+        original_get_indexers = sites_helper_cls.get_indexers
+        original_async_get_indexers = sites_helper_cls.async_get_indexers
+
+        def append_p115_indexer(indexers):
+            items = list(indexers or [])
+            if not getattr(sites_helper_cls, enabled_flag, False):
+                return items
+            current_indexer = getattr(sites_helper_cls, indexer_attr, None)
+            if not current_indexer:
+                return items
+            if not any(self._is_mp_search_site(site) for site in items):
+                items.append(dict(current_indexer))
+            return items
+
+        def get_indexers(helper_self, *args, **kwargs):
+            return append_p115_indexer(original_get_indexers(helper_self, *args, **kwargs))
+
+        async def async_get_indexers(helper_self, *args, **kwargs):
+            return append_p115_indexer(await original_async_get_indexers(helper_self, *args, **kwargs))
+
+        sites_helper_cls.get_indexers = get_indexers
+        sites_helper_cls.async_get_indexers = async_get_indexers
+        setattr(sites_helper_cls, patch_flag, True)
+
+    @staticmethod
+    def _set_mp_search_patch_enabled(enabled: bool):
+        try:
+            from app.helper.sites import SitesHelper  # noqa
+            setattr(SitesHelper, "p115strgmsubplus_enabled", enabled)
+        except Exception:
+            pass
 
     def _add_mp_search_site_to_selected(self):
         """把 115 虚拟站点加入 MoviePilot 搜索站点选择。"""
