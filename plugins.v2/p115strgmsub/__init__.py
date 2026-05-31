@@ -2,11 +2,13 @@
 115网盘订阅追更插件
 结合MoviePilot订阅功能，自动搜索115网盘资源并转存缺失剧集
 """
+import hashlib
 import datetime
 import random
 from pathlib import Path
 from threading import Lock
 from typing import Optional, Any, List, Dict, Tuple
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -14,13 +16,15 @@ from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import text
 
 from app.core.config import settings, global_vars
+from app.core.context import TorrentInfo
 from app.core.event import Event, eventmanager
 from app.db import SessionFactory
 from app.db.subscribe_oper import SubscribeOper
+from app.db.systemconfig_oper import SystemConfigOper
 from app.db.models.site import Site
 from app.log import logger
 from app.plugins import _PluginBase
-from app.schemas.types import EventType, MediaType, NotificationType
+from app.schemas.types import EventType, MediaType, NotificationType, SystemConfigKey
 
 from .clients import PanSouClient, P115ClientManager, NullbrClient
 from .handlers import SearchHandler, SyncHandler, SubscribeHandler, ApiHandler
@@ -37,6 +41,22 @@ from .utils import (
 lock = Lock()
 
 
+class P115SearchResults:
+    """非 list 返回值，用于让 MoviePilot 插件模块短路系统索引器。"""
+
+    def __init__(self, items: Optional[List[TorrentInfo]] = None):
+        self._items = items or []
+
+    def __bool__(self):
+        return bool(self._items)
+
+    def __iter__(self):
+        return iter(self._items)
+
+    def __len__(self):
+        return len(self._items)
+
+
 class P115StrgmSub(_PluginBase):
     """115网盘订阅追更插件"""
 
@@ -47,7 +67,7 @@ class P115StrgmSub(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     # 插件版本
-    plugin_version = "1.4.2"
+    plugin_version = "1.4.3"
     # 插件作者
     plugin_author = "mrtian2016"
     # 作者主页
@@ -78,6 +98,7 @@ class P115StrgmSub(_PluginBase):
     _save_path: str = "/我的接收/MoviePilot/TV"
     _movie_save_path: str = "/我的接收/MoviePilot/Movie"
     _only_115: bool = True
+    _mp_search_enabled: bool = True
     _exclude_subscribes: List[int] = []
 
     _nullbr_enabled: bool = False
@@ -128,6 +149,10 @@ class P115StrgmSub(_PluginBase):
     _api_handler: Optional[ApiHandler] = None
 
     _MIN_INTERVAL_HOURS: int = 8
+    _MP_SEARCH_SITE_ID: int = -115
+    _MP_SEARCH_SITE_NAME: str = "115网盘"
+    _MP_SEARCH_DOMAIN: str = "p115strgmsub.local"
+    _MP_MAGNET_PREFIX: str = "magnet:?xt=urn:btih:"
 
     # ------------------ 调度器 ------------------
 
@@ -657,6 +682,7 @@ class P115StrgmSub(_PluginBase):
             self._save_path = config.get("save_path", "/我的接收/MoviePilot/TV")
             self._movie_save_path = config.get("movie_save_path", "/我的接收/MoviePilot/Movie")
             self._only_115 = config.get("only_115", True)
+            self._mp_search_enabled = config.get("mp_search_enabled", True)
             self._exclude_subscribes = config.get("exclude_subscribes", []) or []
 
             self._nullbr_enabled = config.get("nullbr_enabled", False)
@@ -703,6 +729,7 @@ class P115StrgmSub(_PluginBase):
         # 初始化客户端/handlers
         self._init_clients()
         self._init_handlers()
+        self._sync_mp_search_site()
 
         # 配置立即生效
         if self._block_system_subscribe:
@@ -836,6 +863,184 @@ class P115StrgmSub(_PluginBase):
             save_data_func=self.save_data
         )
 
+    # ------------------ MoviePilot 搜索接入 ------------------
+
+    def _sync_mp_search_site(self):
+        """把 115 网盘注册为 MoviePilot 搜索页可选的虚拟索引站点。"""
+        if not self._enabled or not self._mp_search_enabled:
+            self._remove_mp_search_site_from_selected()
+            return
+
+        try:
+            from app.helper.sites import SitesHelper  # noqa
+
+            indexer = {
+                "id": self._MP_SEARCH_SITE_ID,
+                "name": self._MP_SEARCH_SITE_NAME,
+                "domain": f"https://{self._MP_SEARCH_DOMAIN}/",
+                "url": f"https://{self._MP_SEARCH_DOMAIN}/",
+                "parser": "P115StrgmSub",
+                "public": True,
+                "pri": 0,
+                "proxy": False,
+                "language": "zh",
+                "result_num": 20,
+                "timeout": 120,
+            }
+            sites_helper = SitesHelper()
+            if hasattr(sites_helper, "add_indexer"):
+                sites_helper.add_indexer(self._MP_SEARCH_DOMAIN, indexer)
+            elif hasattr(sites_helper, "_indexers"):
+                sites_helper._indexers[self._MP_SEARCH_DOMAIN] = indexer
+            self._add_mp_search_site_to_selected()
+            logger.info("已接入 MoviePilot 搜索：115网盘")
+        except Exception as e:
+            logger.warning(f"接入 MoviePilot 搜索失败：{e}")
+
+    def _add_mp_search_site_to_selected(self):
+        """如果用户配置了搜索站点白名单，自动追加 115 虚拟站点。"""
+        try:
+            selected_sites = SystemConfigOper().get(SystemConfigKey.IndexerSites) or []
+            if selected_sites and self._MP_SEARCH_SITE_ID not in selected_sites:
+                selected_sites.append(self._MP_SEARCH_SITE_ID)
+                SystemConfigOper().set(SystemConfigKey.IndexerSites, selected_sites)
+                logger.info("已将 115网盘 加入 MoviePilot 搜索站点")
+        except Exception as e:
+            logger.warning(f"更新 MoviePilot 搜索站点失败：{e}")
+
+    def _remove_mp_search_site_from_selected(self):
+        """关闭 MP 搜索接入时，从已选搜索站点中移除虚拟站点。"""
+        try:
+            selected_sites = SystemConfigOper().get(SystemConfigKey.IndexerSites) or []
+            if self._MP_SEARCH_SITE_ID in selected_sites:
+                selected_sites.remove(self._MP_SEARCH_SITE_ID)
+                SystemConfigOper().set(SystemConfigKey.IndexerSites, selected_sites)
+        except Exception as e:
+            logger.warning(f"移除 MoviePilot 115 搜索站点失败：{e}")
+
+    def _is_mp_search_site(self, site: Optional[Dict[str, Any]]) -> bool:
+        if not site:
+            return False
+        return site.get("id") == self._MP_SEARCH_SITE_ID or site.get("parser") == "P115StrgmSub"
+
+    def _build_p115_magnet(self, share_url: str, title: str, mtype: Optional[MediaType] = None) -> str:
+        digest = hashlib.sha1(share_url.encode("utf-8")).hexdigest()
+        save_path = self._movie_save_path if mtype == MediaType.MOVIE else self._save_path
+        return (
+            f"{self._MP_MAGNET_PREFIX}{digest}"
+            f"&dn={quote(title or self._MP_SEARCH_SITE_NAME)}"
+            f"&x.p115={quote(share_url, safe='')}"
+            f"&x.save={quote(save_path or '')}"
+        )
+
+    def _parse_p115_magnet(self, content: Any) -> Tuple[Optional[str], Optional[str]]:
+        if not isinstance(content, str) or not content.startswith(self._MP_MAGNET_PREFIX):
+            return None, None
+        query = parse_qs(urlparse(content).query)
+        share_url = unquote((query.get("x.p115") or [""])[0])
+        save_path = unquote((query.get("x.save") or [""])[0])
+        return share_url, save_path
+
+    def _search_p115_for_mp(self, keyword: str, mtype: Optional[MediaType] = None) -> List[TorrentInfo]:
+        if not self._mp_search_enabled:
+            return []
+        if not self._pansou_client:
+            logger.warning("PanSou 客户端未初始化，无法接入 MoviePilot 搜索")
+            return []
+        if not keyword or not keyword.strip():
+            return []
+
+        channels = None
+        if self._pansou_channels and self._pansou_channels.strip():
+            channels = [ch.strip() for ch in self._pansou_channels.split(",") if ch.strip()]
+        cloud_types = ["115"] if self._only_115 else None
+        search_result = self._pansou_client.search(
+            keyword=keyword.strip(),
+            cloud_types=cloud_types,
+            channels=channels,
+            limit=20,
+        )
+        if not search_result or search_result.get("error"):
+            logger.warning(f"MoviePilot 搜索 115 资源失败：{(search_result or {}).get('error')}")
+            return []
+
+        resources = (search_result.get("results") or {}).get("115网盘", [])
+        torrents: List[TorrentInfo] = []
+        for resource in resources:
+            share_url = resource.get("url")
+            title = resource.get("title") or keyword
+            if not share_url:
+                continue
+            torrent = TorrentInfo(
+                site=self._MP_SEARCH_SITE_ID,
+                site_name=self._MP_SEARCH_SITE_NAME,
+                site_order=0,
+                title=title,
+                description=f"115网盘分享链接：{share_url}",
+                enclosure=self._build_p115_magnet(share_url, title, mtype),
+                page_url=share_url,
+                pubdate=resource.get("update_time") or "",
+                seeders=999,
+                peers=0,
+                grabs=0,
+                size=0,
+                uploadvolumefactor=1.0,
+                downloadvolumefactor=0.0,
+                category=mtype.value if isinstance(mtype, MediaType) else None,
+                labels=["115网盘", "插件转存"],
+            )
+            torrents.append(torrent)
+
+        logger.info(f"MoviePilot 搜索 115 资源完成：{keyword}，返回 {len(torrents)} 条")
+        return torrents
+
+    def mp_search_page_size(self, site: dict, keyword: Optional[str] = None):
+        if self._is_mp_search_site(site):
+            return 20
+        return None
+
+    def mp_search_torrents(
+            self,
+            site: dict,
+            keyword: str = None,
+            mtype: Optional[MediaType] = None,
+            page: Optional[int] = 0,
+            **kwargs
+    ):
+        if not self._is_mp_search_site(site):
+            return None
+        if page and int(page or 0) > 0:
+            return P115SearchResults()
+        return P115SearchResults(self._search_p115_for_mp(keyword=keyword, mtype=mtype))
+
+    async def async_mp_search_torrents(self, site: dict, keyword: str = None,
+                                       mtype: Optional[MediaType] = None,
+                                       page: Optional[int] = 0, **kwargs):
+        return self.mp_search_torrents(site=site, keyword=keyword, mtype=mtype, page=page, **kwargs)
+
+    def mp_download(self, content: Any, **kwargs):
+        """把 115 虚拟磁力链接转换为 115 转存，并向 MoviePilot 返回一个伪下载 ID。"""
+        share_url, save_path = self._parse_p115_magnet(content)
+        if not share_url:
+            return None
+        if not self._p115_manager:
+            return "P115StrgmSub", None, None, "115 客户端未初始化"
+
+        target_path = save_path or self._save_path
+        success = self._p115_manager.transfer_share(share_url, target_path)
+        if not success:
+            return "P115StrgmSub", None, None, "115 转存失败"
+
+        fake_hash = f"p115-{hashlib.sha1(f'{share_url}|{target_path}'.encode('utf-8')).hexdigest()[:32]}"
+        logger.info(f"MoviePilot 手动下载已转为 115 转存：{share_url} => {target_path}")
+        return "P115StrgmSub", fake_hash, "NoSubfolder", None
+
+    def mp_download_added(self, context: Any, **kwargs):
+        torrent = getattr(context, "torrent_info", None)
+        if torrent and torrent.site == self._MP_SEARCH_SITE_ID:
+            return "P115StrgmSub"
+        return None
+
     # ------------------ 配置写回 ------------------
 
     def __update_config(self):
@@ -845,6 +1050,7 @@ class P115StrgmSub(_PluginBase):
             "notify": self._notify,
             "onlyonce": self._onlyonce,
             "only_115": self._only_115,
+            "mp_search_enabled": self._mp_search_enabled,
             "save_path": self._save_path,
             "movie_save_path": self._movie_save_path,
             "cookies": self._cookies,
@@ -922,6 +1128,17 @@ class P115StrgmSub(_PluginBase):
     def get_page(self) -> Optional[List[dict]]:
         history = self.get_data('history') or []
         return UIConfig.get_page(history)
+
+    def get_module(self) -> Dict[str, Any]:
+        if not self._enabled or not self._mp_search_enabled:
+            return {}
+        return {
+            "get_search_page_size": self.mp_search_page_size,
+            "search_torrents": self.mp_search_torrents,
+            "async_search_torrents": self.async_mp_search_torrents,
+            "download": self.mp_download,
+            "download_added": self.mp_download_added,
+        }
 
     def get_api(self) -> List[Dict[str, Any]]:
         return [

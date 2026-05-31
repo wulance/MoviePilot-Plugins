@@ -99,8 +99,10 @@ class UIConfig:
                             {'component': 'VCol', 'props': {'cols': 12, 'md': 2},
                              'content': [{'component': 'VSwitch', 'props': {'model': 'block_system_subscribe', 'label': '屏蔽系统订阅'}}]},
                             {'component': 'VCol', 'props': {'cols': 12, 'md': 2},
+                             'content': [{'component': 'VSwitch', 'props': {'model': 'mp_search_enabled', 'label': '接入MP搜索'}}]},
+                            {'component': 'VCol', 'props': {'cols': 12, 'md': 2},
                              'content': [{'component': 'VSwitch', 'props': {'model': 'onlyonce', 'label': '立即运行'}}]},
-                            {'component': 'VCol', 'props': {'cols': 12, 'md': 4},
+                            {'component': 'VCol', 'props': {'cols': 12, 'md': 2},
                              'content': [{
                                  'component': 'VCronField',
                                  'props': {
@@ -355,6 +357,7 @@ class UIConfig:
             "notify": True,
             "onlyonce": False,
             "only_115": True,
+            "mp_search_enabled": True,
             "cron": "30 2,10,18 * * *",
 
             "unblock_site_ids": [],
