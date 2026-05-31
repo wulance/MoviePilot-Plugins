@@ -1,14 +1,15 @@
 {
-  "P115StrgmSub": {
-    "name": "115网盘订阅追更",
+  "P115StrgmSubPlus": {
+    "name": "115网盘订阅追更增强版",
     "release": true,
     "description": "结合MoviePilot订阅功能，自动搜索115网盘资源并转存缺失剧集。",
     "labels": "订阅,115网盘",
-    "version": "1.4.3",
+    "version": "1.4.4",
     "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
     "author": "mrtian2016",
     "level": 1,
     "history": {
+      "v1.4.4": "1. 更名为115网盘订阅追更增强版，使用独立插件ID避免与旧版插件冲突；",
       "v1.4.3": "1. 新增接入 MoviePilot 搜索，支持在资源搜索中显示115网盘结果并手动转存；",
       "v1.4.2": "1. 优化PanSou搜索关键词过滤逻辑；",
       "v1.4.1": "1. 更新版本号；",

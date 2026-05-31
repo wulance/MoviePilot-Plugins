@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # 监控目录
-WATCH_DIR="./plugins.v2/p115strgmsub"
+WATCH_DIR="./plugins.v2/p115strgmsubplus"
 # 目标目录
-TARGET_DIR="../MoviePilot/app/plugins/p115strgmsub"
+TARGET_DIR="../MoviePilot/app/plugins/p115strgmsubplus"
 
 # 同步函数
 sync_files() {

@@ -1,5 +1,5 @@
 """
-115网盘订阅追更插件
+115网盘订阅追更增强版插件
 结合MoviePilot订阅功能，自动搜索115网盘资源并转存缺失剧集
 """
 import hashlib
@@ -57,23 +57,23 @@ class P115SearchResults:
         return len(self._items)
 
 
-class P115StrgmSub(_PluginBase):
-    """115网盘订阅追更插件"""
+class P115StrgmSubPlus(_PluginBase):
+    """115网盘订阅追更增强版插件"""
 
     # 插件名称
-    plugin_name = "115网盘订阅追更"
+    plugin_name = "115网盘订阅追更增强版"
     # 插件描述
     plugin_desc = "结合MoviePilot订阅功能，自动搜索115网盘资源并转存缺失的电影和剧集。"
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     # 插件版本
-    plugin_version = "1.4.3"
+    plugin_version = "1.4.4"
     # 插件作者
     plugin_author = "mrtian2016"
     # 作者主页
     author_url = "https://github.com/mrtian2016"
     # 插件配置项ID前缀
-    plugin_config_prefix = "p115strgmsub_"
+    plugin_config_prefix = "p115strgmsubplus_"
     plugin_order = 20
     auth_level = 1
 
@@ -151,7 +151,7 @@ class P115StrgmSub(_PluginBase):
     _MIN_INTERVAL_HOURS: int = 8
     _MP_SEARCH_SITE_ID: int = -115
     _MP_SEARCH_SITE_NAME: str = "115网盘"
-    _MP_SEARCH_DOMAIN: str = "p115strgmsub.local"
+    _MP_SEARCH_DOMAIN: str = "p115strgmsubplus.local"
     _MP_MAGNET_PREFIX: str = "magnet:?xt=urn:btih:"
 
     # ------------------ 调度器 ------------------
@@ -879,7 +879,7 @@ class P115StrgmSub(_PluginBase):
                 "name": self._MP_SEARCH_SITE_NAME,
                 "domain": f"https://{self._MP_SEARCH_DOMAIN}/",
                 "url": f"https://{self._MP_SEARCH_DOMAIN}/",
-                "parser": "P115StrgmSub",
+                "parser": "P115StrgmSubPlus",
                 "public": True,
                 "pri": 0,
                 "proxy": False,
@@ -921,7 +921,7 @@ class P115StrgmSub(_PluginBase):
     def _is_mp_search_site(self, site: Optional[Dict[str, Any]]) -> bool:
         if not site:
             return False
-        return site.get("id") == self._MP_SEARCH_SITE_ID or site.get("parser") == "P115StrgmSub"
+        return site.get("id") == self._MP_SEARCH_SITE_ID or site.get("parser") == "P115StrgmSubPlus"
 
     def _build_p115_magnet(self, share_url: str, title: str, mtype: Optional[MediaType] = None) -> str:
         digest = hashlib.sha1(share_url.encode("utf-8")).hexdigest()
@@ -1024,21 +1024,21 @@ class P115StrgmSub(_PluginBase):
         if not share_url:
             return None
         if not self._p115_manager:
-            return "P115StrgmSub", None, None, "115 客户端未初始化"
+            return "P115StrgmSubPlus", None, None, "115 客户端未初始化"
 
         target_path = save_path or self._save_path
         success = self._p115_manager.transfer_share(share_url, target_path)
         if not success:
-            return "P115StrgmSub", None, None, "115 转存失败"
+            return "P115StrgmSubPlus", None, None, "115 转存失败"
 
         fake_hash = f"p115-{hashlib.sha1(f'{share_url}|{target_path}'.encode('utf-8')).hexdigest()[:32]}"
         logger.info(f"MoviePilot 手动下载已转为 115 转存：{share_url} => {target_path}")
-        return "P115StrgmSub", fake_hash, "NoSubfolder", None
+        return "P115StrgmSubPlus", fake_hash, "NoSubfolder", None
 
     def mp_download_added(self, context: Any, **kwargs):
         torrent = getattr(context, "torrent_info", None)
         if torrent and torrent.site == self._MP_SEARCH_SITE_ID:
-            return "P115StrgmSub"
+            return "P115StrgmSubPlus"
         return None
 
     # ------------------ 配置写回 ------------------
@@ -1162,7 +1162,7 @@ class P115StrgmSub(_PluginBase):
         return [{
             "cmd": "/p115_sub_action",
             "event": EventType.PluginAction,
-            "desc": "115网盘订阅追更",
+            "desc": "115网盘订阅追更增强版",
             "category": "订阅",
             "data": {
                 "action": "p115_sub_action"
@@ -1179,8 +1179,8 @@ class P115StrgmSub(_PluginBase):
         if self._cron and self._cron_interval_ge_min_hours(self._cron, self._MIN_INTERVAL_HOURS):
             try:
                 services.append({
-                    "id": "P115StrgmSub",
-                    "name": "115网盘订阅追更服务",
+                    "id": "P115StrgmSubPlus",
+                    "name": "115网盘订阅追更增强版服务",
                     "trigger": CronTrigger.from_crontab(self._cron),
                     "func": self.sync_subscribes,
                     "kwargs": {}
@@ -1188,16 +1188,16 @@ class P115StrgmSub(_PluginBase):
             except Exception as e:
                 logger.warning(f"Cron 表达式无效：{self._cron}，将回退 interval=8h。错误：{e}")
                 services.append({
-                    "id": "P115StrgmSub",
-                    "name": "115网盘订阅追更服务",
+                    "id": "P115StrgmSubPlus",
+                    "name": "115网盘订阅追更增强版服务",
                     "trigger": "interval",
                     "func": self.sync_subscribes,
                     "kwargs": {"hours": 8}
                 })
         else:
             services.append({
-                "id": "P115StrgmSub",
-                "name": "115网盘订阅追更服务",
+                "id": "P115StrgmSubPlus",
+                "name": "115网盘订阅追更增强版服务",
                 "trigger": "interval",
                 "func": self.sync_subscribes,
                 "kwargs": {"hours": 8}
@@ -1207,7 +1207,7 @@ class P115StrgmSub(_PluginBase):
         if self._hdhive_checkin_enabled and self._hdhive_checkin_cron:
             try:
                 services.append({
-                    "id": "P115StrgmSub_HDHiveCheckin",
+                    "id": "P115StrgmSubPlus_HDHiveCheckin",
                     "name": "HDHive 签到服务",
                     "trigger": CronTrigger.from_crontab(self._hdhive_checkin_cron),
                     "func": self._do_hdhive_checkin,
@@ -1230,7 +1230,7 @@ class P115StrgmSub(_PluginBase):
             if self._notify:
                 self.post_message(
                     mtype=NotificationType.Plugin,
-                    title="【115网盘订阅追更】配置错误",
+                    title="【115网盘订阅追更增强版】配置错误",
                     text="PanSou、Nullbr、HDHive 均未启用，请至少启用一个搜索源。"
                 )
             return False
@@ -1245,7 +1245,7 @@ class P115StrgmSub(_PluginBase):
             if self._notify:
                 self.post_message(
                     mtype=NotificationType.Manual,
-                    title="【115网盘订阅追更】登录失败",
+                    title="【115网盘订阅追更增强版】登录失败",
                     text="115 Cookie 可能已过期，请更新后重试。"
                 )
             return False
@@ -1254,7 +1254,7 @@ class P115StrgmSub(_PluginBase):
         if self._notify:
             self.post_message(
                 mtype=NotificationType.Plugin,
-                title="【115网盘订阅追更】开始执行",
+                title="【115网盘订阅追更增强版】开始执行",
                 text="正在扫描订阅列表并同步缺失内容..."
             )
 
@@ -1288,7 +1288,7 @@ class P115StrgmSub(_PluginBase):
             if self._notify:
                 self.post_message(
                     mtype=NotificationType.Plugin,
-                    title="【115网盘订阅追更】执行完成",
+                    title="【115网盘订阅追更增强版】执行完成",
                     text="当前无订阅数据。"
                 )
             return True
@@ -1343,7 +1343,7 @@ class P115StrgmSub(_PluginBase):
             else:
                 self.post_message(
                     mtype=NotificationType.Plugin,
-                    title="【115网盘订阅追更】执行完成",
+                    title="【115网盘订阅追更增强版】执行完成",
                     text="本次同步未发现需要转存的新资源。"
                 )
 
@@ -1398,7 +1398,7 @@ class P115StrgmSub(_PluginBase):
         self.post_message(
             mtype=NotificationType.Plugin,
             channel=event_data.get("channel"),
-            title="【115网盘订阅追更】开始执行",
+            title="【115网盘订阅追更增强版】开始执行",
             text="已收到远程命令，正在执行追更任务...",
             userid=event_data.get("user")
         )
@@ -1408,7 +1408,7 @@ class P115StrgmSub(_PluginBase):
         self.post_message(
             mtype=NotificationType.Plugin,
             channel=event_data.get("channel"),
-            title="【115网盘订阅追更】执行完成",
+            title="【115网盘订阅追更增强版】执行完成",
             text="远程触发的追更任务已完成。",
             userid=event_data.get("user")
         )

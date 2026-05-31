@@ -95,7 +95,7 @@ class SubscribeHandler:
                         season_text = f" 第{subscribe.season}季" if subscribe.type == MediaType.TV.value and subscribe.season else ""
                         self._post_message(
                             mtype=NotificationType.Plugin,
-                            title="【115网盘订阅追更】订阅完成",
+                            title="【115网盘订阅追更增强版】订阅完成",
                             text=f"{subscribe.name}{season_text} 已完成，订阅已移至历史记录。"
                         )
                 except Exception as e:
