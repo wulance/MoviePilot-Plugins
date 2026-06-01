@@ -4,11 +4,12 @@
     "release": true,
     "description": "结合MoviePilot订阅功能，自动搜索115网盘资源并转存缺失剧集。",
     "labels": "订阅,115网盘",
-    "version": "1.4.9",
+    "version": "1.4.10",
     "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
     "author": "wulance",
     "level": 1,
     "history": {
+      "v1.4.10": "1. 修复 MoviePilot 第三方插件安装器所需的 Release 根目录结构；",
       "v1.4.9": "1. 修复 Release 更新包目录结构，避免更新后插件无法加载；",
       "v1.4.8": "1. 支持 MoviePilot 手动下载普通磁力链时提交到 115 离线下载；",
       "v1.4.7": "1. 优化 PanSou 搜索关键词、剧集文件匹配识别和 MoviePilot 手动搜索结果展示；",
