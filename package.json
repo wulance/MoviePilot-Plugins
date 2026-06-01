@@ -4,11 +4,12 @@
     "release": true,
     "description": "结合MoviePilot订阅功能，自动搜索115网盘资源并转存缺失剧集。",
     "labels": "订阅,115网盘",
-    "version": "1.4.11",
+    "version": "1.4.12",
     "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
     "author": "wulance",
     "level": 1,
     "history": {
+      "v1.4.12": "1. 增加订阅下载磁力链兜底，系统无法解析种子集数时改由 115 离线下载提交；",
       "v1.4.11": "1. 统一 p115client 依赖版本，避免与 115网盘STRM助手同时安装时依赖冲突；",
       "v1.4.10": "1. 修复 MoviePilot 第三方插件安装器所需的 Release 根目录结构；",
       "v1.4.9": "1. 修复 Release 更新包目录结构，避免更新后插件无法加载；",

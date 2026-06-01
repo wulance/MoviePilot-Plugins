@@ -8,6 +8,7 @@ import random
 import re
 from pathlib import Path
 from threading import Lock
+from functools import wraps
 from typing import Optional, Any, List, Dict, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
@@ -68,7 +69,7 @@ class P115StrgmSubPlus(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     # 插件版本
-    plugin_version = "1.4.11"
+    plugin_version = "1.4.12"
     # 插件作者
     plugin_author = "wulance"
     # 作者主页
@@ -155,6 +156,7 @@ class P115StrgmSubPlus(_PluginBase):
     _MP_SEARCH_SITE_NAME: str = "115网盘"
     _MP_SEARCH_DOMAIN: str = "p115strgmsubplus.local"
     _MP_MAGNET_PREFIX: str = "magnet:?xt=urn:btih:"
+    _batch_download_patched: bool = False
 
     # ------------------ 调度器 ------------------
 
@@ -732,6 +734,7 @@ class P115StrgmSubPlus(_PluginBase):
         self._init_clients()
         self._init_handlers()
         self._sync_mp_search_site()
+        self._patch_batch_download_for_magnets()
 
         # 配置立即生效
         if self._block_system_subscribe:
@@ -1008,6 +1011,125 @@ class P115StrgmSubPlus(_PluginBase):
         if mtype == MediaType.MOVIE or category == MediaType.MOVIE.value:
             return self._movie_save_path
         return self._save_path
+
+    @staticmethod
+    def _context_matches_no_exists(context: Any, no_exists: Optional[Dict]) -> Tuple[bool, Optional[Any], Optional[int], Optional[set]]:
+        if not no_exists:
+            return False, None, None, None
+        media = getattr(context, "media_info", None)
+        meta = getattr(context, "meta_info", None)
+        if not media or not meta or getattr(media, "type", None) != MediaType.TV:
+            return False, None, None, None
+
+        media_ids = [getattr(media, "tmdb_id", None), getattr(media, "douban_id", None)]
+        season_list = list(getattr(meta, "season_list", None) or [])
+        if not season_list and getattr(meta, "season", None):
+            season_list = [getattr(meta, "season")]
+        if not season_list:
+            season_list = [1]
+
+        episode_list = set(getattr(meta, "episode_list", None) or [])
+        allowed = getattr(context, "allowed_episodes", None)
+        for mid in media_ids:
+            if mid is None or mid not in no_exists:
+                continue
+            need_by_season = no_exists.get(mid) or {}
+            for season in season_list:
+                need_info = need_by_season.get(season)
+                if not need_info:
+                    continue
+                need_episodes = set(getattr(need_info, "episodes", None) or [])
+                if allowed is not None:
+                    need_episodes &= set(allowed)
+                if episode_list and need_episodes and not episode_list.intersection(need_episodes):
+                    continue
+                return True, mid, season, (episode_list.intersection(need_episodes) or need_episodes or None)
+        return False, None, None, None
+
+    @staticmethod
+    def _mark_no_exists_downloaded(no_exists: Optional[Dict], mid: Any, season: Optional[int], episodes: Optional[set]):
+        if not no_exists or mid not in no_exists or season is None:
+            return
+        need_info = (no_exists.get(mid) or {}).get(season)
+        if not need_info:
+            return
+        need_episodes = set(getattr(need_info, "episodes", None) or [])
+        if episodes and need_episodes:
+            remaining = sorted(need_episodes.difference(episodes))
+            if remaining:
+                need_info.episodes = remaining
+                return
+        no_exists[mid].pop(season, None)
+        if not no_exists.get(mid):
+            no_exists.pop(mid, None)
+
+    def _patch_batch_download_for_magnets(self):
+        if P115StrgmSubPlus._batch_download_patched:
+            return
+        try:
+            from app.chain.download import DownloadChain
+        except Exception as e:
+            logger.warning(f"MoviePilot 磁力兜底补丁加载失败：{e}")
+            return
+
+        original_batch_download = DownloadChain.batch_download
+        plugin = self
+
+        @wraps(original_batch_download)
+        def patched_batch_download(chain_self, contexts, no_exists=None, save_path=None,
+                                   channel=None, source=None, userid=None, username=None,
+                                   downloader=None):
+            downloaded_list, remaining_no_exists = original_batch_download(
+                chain_self,
+                contexts,
+                no_exists=no_exists,
+                save_path=save_path,
+                channel=channel,
+                source=source,
+                userid=userid,
+                username=username,
+                downloader=downloader,
+            )
+            if not plugin._enabled or not plugin._p115_manager or not remaining_no_exists:
+                return downloaded_list, remaining_no_exists
+
+            for context in contexts or []:
+                if context in downloaded_list or not remaining_no_exists:
+                    continue
+                matched, mid, season, selected_episodes = plugin._context_matches_no_exists(context, remaining_no_exists)
+                if not matched:
+                    continue
+
+                torrent = getattr(context, "torrent_info", None)
+                if not torrent:
+                    continue
+                content, _, _ = chain_self.download_torrent(torrent, channel=channel, source=source, userid=userid)
+                if not plugin._is_magnet_url(content):
+                    continue
+
+                logger.info(f"检测到订阅候选为磁力链，改由 115 离线下载兜底：{torrent.title}")
+                download_id = chain_self.download_single(
+                    context=context,
+                    torrent_content=content,
+                    episodes=selected_episodes,
+                    save_path=save_path,
+                    channel=channel,
+                    source=source,
+                    userid=userid,
+                    username=username or plugin.plugin_name,
+                    downloader=downloader,
+                )
+                if not download_id:
+                    continue
+                downloaded_list.append(context)
+                plugin._mark_no_exists_downloaded(remaining_no_exists, mid, season, selected_episodes)
+                logger.info(f"{torrent.title} 已提交到 115 离线下载")
+
+            return downloaded_list, remaining_no_exists
+
+        DownloadChain.batch_download = patched_batch_download
+        P115StrgmSubPlus._batch_download_patched = True
+        logger.info("已启用 MoviePilot 订阅磁力链 115 离线下载兜底")
 
     def _search_p115_for_mp(self, keyword: str, mtype: Optional[MediaType] = None) -> List[TorrentInfo]:
         if not self._mp_search_enabled:
