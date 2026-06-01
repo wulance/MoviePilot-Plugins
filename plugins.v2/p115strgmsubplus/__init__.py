@@ -68,7 +68,7 @@ class P115StrgmSubPlus(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     # 插件版本
-    plugin_version = "1.4.7"
+    plugin_version = "1.4.8"
     # 插件作者
     plugin_author = "wulance"
     # 作者主页
@@ -992,6 +992,23 @@ class P115StrgmSubPlus(_PluginBase):
         save_path = unquote((query.get("x.save") or [""])[0])
         return share_url, save_path
 
+    def _is_magnet_url(self, content: Any) -> bool:
+        return isinstance(content, str) and content.strip().lower().startswith("magnet:")
+
+    def _resolve_download_save_path(self, **kwargs) -> str:
+        for key in ("save_path", "download_path", "download_dir"):
+            path = kwargs.get(key)
+            if isinstance(path, str) and path.strip():
+                return path.strip()
+
+        context = kwargs.get("context")
+        media = kwargs.get("media_info") or getattr(context, "media_info", None)
+        mtype = kwargs.get("mtype") or getattr(media, "type", None)
+        category = kwargs.get("category")
+        if mtype == MediaType.MOVIE or category == MediaType.MOVIE.value:
+            return self._movie_save_path
+        return self._save_path
+
     def _search_p115_for_mp(self, keyword: str, mtype: Optional[MediaType] = None) -> List[TorrentInfo]:
         if not self._mp_search_enabled:
             return []
@@ -1229,20 +1246,34 @@ class P115StrgmSubPlus(_PluginBase):
         return self.mp_search_torrents(site=site, keyword=keyword, mtype=mtype, page=page, **kwargs)
 
     def mp_download(self, content: Any, **kwargs):
-        """把 115 虚拟磁力链接转换为 115 转存，并向 MoviePilot 返回一个伪下载 ID。"""
+        """把 115 虚拟磁力/普通磁力转换为 115 任务，并向 MoviePilot 返回伪下载 ID。"""
         share_url, save_path = self._parse_p115_magnet(content)
-        if not share_url:
+        is_magnet = self._is_magnet_url(content)
+        if not share_url and not is_magnet:
             return None
         if not self._p115_manager:
+            if is_magnet and not share_url:
+                return None
             return "P115StrgmSubPlus", None, None, "115 客户端未初始化"
 
-        target_path = save_path or self._save_path
-        success = self._p115_manager.transfer_share(share_url, target_path)
-        if not success:
-            return "P115StrgmSubPlus", None, None, "115 转存失败"
+        if share_url:
+            target_path = save_path or self._save_path
+            success = self._p115_manager.transfer_share(share_url, target_path)
+            action = "转存"
+            error = "115 转存失败"
+            hash_source = f"{share_url}|{target_path}"
+        else:
+            target_path = self._resolve_download_save_path(**kwargs)
+            success = self._p115_manager.offline_download_url(content, target_path)
+            action = "离线下载"
+            error = "115 离线下载提交失败"
+            hash_source = f"{content}|{target_path}"
 
-        fake_hash = f"p115-{hashlib.sha1(f'{share_url}|{target_path}'.encode('utf-8')).hexdigest()[:32]}"
-        logger.info(f"MoviePilot 手动下载已转为 115 转存：{share_url} => {target_path}")
+        if not success:
+            return "P115StrgmSubPlus", None, None, error
+
+        fake_hash = f"p115-{hashlib.sha1(hash_source.encode('utf-8')).hexdigest()[:32]}"
+        logger.info(f"MoviePilot 下载已转为 115 {action}：{content} => {target_path}")
         return "P115StrgmSubPlus", fake_hash, "NoSubfolder", None
 
     def mp_download_added(self, context: Any, **kwargs):

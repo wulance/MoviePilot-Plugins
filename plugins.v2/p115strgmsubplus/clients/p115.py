@@ -674,6 +674,55 @@ class P115ClientManager:
             save_path=save_path
         )
 
+    def offline_download_url(self, url: str, save_path: str) -> bool:
+        """
+        添加 115 离线下载任务，支持 magnet/http/ed2k 等 115 离线链接类型。
+
+        :param url: 离线下载链接
+        :param save_path: 保存路径
+        :return: 是否成功提交任务
+        """
+        if not self.client:
+            return False
+        if not url:
+            logger.error("离线下载链接为空")
+            return False
+
+        parent_id = self.get_pid_by_path(save_path, mkdir=True)
+        if parent_id == -1:
+            logger.error(f"无法获取或创建离线下载目标目录: {save_path}")
+            return False
+
+        payload = {
+            "url": url,
+            "wp_path_id": parent_id,
+        }
+
+        try:
+            self._api_call_count += 1
+            if hasattr(self.client, "offline_add_url"):
+                response = self._rate_limited_call(self.client.offline_add_url, payload)
+            elif hasattr(self.client, "offline_add_urls"):
+                response = self._rate_limited_call(
+                    self.client.offline_add_urls,
+                    {"urls": url, "wp_path_id": parent_id}
+                )
+            else:
+                logger.error("当前 p115client 不支持离线下载接口 offline_add_url/offline_add_urls")
+                return False
+
+            try:
+                check_response(response)
+            except Exception as e:
+                logger.error(f"115 离线下载提交失败: {e}, response={response}")
+                return False
+
+            logger.info(f"115 离线下载任务已提交: {url} => {save_path}")
+            return True
+        except Exception as e:
+            logger.error(f"提交 115 离线下载任务失败: {e}")
+            return False
+
     def transfer_file(
             self,
             share_url: str,
